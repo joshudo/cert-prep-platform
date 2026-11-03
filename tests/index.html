@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>DP-600 Self-Tests</title>
+<style>body{font:15px/1.5 system-ui,sans-serif;margin:24px;background:#fff;color:#1f2328}.f{color:#a3271f;font-weight:600}.p{color:#1a6b3c}li{margin:2px 0}</style></head>
+<body><h1>DP-600 self-tests</h1><p id="sum" role="status">Running...</p><ul id="out"></ul>
+<script src="../data/sources.js"></script><script src="../data/q_maintain.js"></script><script src="../data/q_prepare.js"></script><script src="../data/q_model.js"></script><script src="../data/notes.js"></script><script src="../data/review.js"></script><script src="../js/engine.js"></script>
+<script>
+const E = Engine, D = DP600; let pass = 0, fail = 0; const fails = [];
+function t(name, cond, extra) { if (cond) pass++; else { fail++; fails.push(name + (extra ? ': ' + extra : '')); } }
+function eq(name, a, b) { t(name, JSON.stringify(a) === JSON.stringify(b), `got ${JSON.stringify(a)}, want ${JSON.stringify(b)}`); }
+
+// Dates
+eq('addDays over a month', E.addDays('2026-11-29', 3), '2026-12-02');
+eq('diffDays', E.diffDays('2026-11-02', '2026-12-21'), 49);
+eq('diffDays across DST', E.diffDays('2026-03-07', '2026-03-09'), 2);
+
+// Forgetting curve
+t('R is 0.9 when t equals S', Math.abs(E.retrievability(10, 10) - 0.9) < 1e-9);
+t('interval for 0.9 equals S', Math.abs(E.intervalFor(10, 0.9) - 10) < 1e-9);
+t('R declines over time', E.retrievability(5, 20) < E.retrievability(5, 2));
+
+// Ratings
+eq('wrong is again', E.ratingFor(false, 'sure'), 'again');
+eq('guess is hard', E.ratingFor(true, 'guess'), 'hard');
+eq('sure is easy', E.ratingFor(true, 'sure'), 'easy');
+eq('unsure is good', E.ratingFor(true, 'unsure'), 'good');
+eq('low recall is hard', E.ratingFor(true, 'sure', 0.7), 'hard');
+
+// Scheduler
+const exam = '2026-12-21';
+let c = E.updateCard(null, 'good', '2026-11-02', exam);
+t('first review schedules ahead', c.due > '2026-11-02');
+const c2 = E.updateCard(c, 'good', c.due, exam);
+t('stability grows after success', c2.S > c.S, `${c2.S} vs ${c.S}`);
+const lapse = E.updateCard(c2, 'again', c2.due, exam);
+t('lapse cuts stability', lapse.S < c2.S); eq('lapse due next day', lapse.due, E.addDays(c2.due, 1)); eq('lapse counted', lapse.lapses, 1);
+let big = { S: 500, D: 3, reps: 5, lapses: 0, last: '2026-11-02' };
+big = E.updateCard(big, 'easy', '2026-11-02', exam);
+t('gap capped relative to exam', E.diffDays('2026-11-02', big.due) <= Math.round(49 * 0.3), big.due);
+const late = E.updateCard({ S: 50, D: 3, reps: 3, lapses: 0, last: '2026-12-19' }, 'easy', '2026-12-20', exam);
+eq('day before exam gives gap 1', late.due, '2026-12-21');
+const after = E.updateCard({ S: 10, D: 3, reps: 3, lapses: 0, last: '2026-12-22' }, 'good', '2026-12-30', exam);
+t('after exam date no crash, and no cap', after.due > '2026-12-31');
+
+// Grading
+eq('single right', E.grade({ t: 'single', a: 1 }, 1).ok, true);
+eq('single wrong', E.grade({ t: 'single', a: 1 }, 0).ok, false);
+eq('multi exact', E.grade({ t: 'multi', a: [0, 2] }, [2, 0]).ok, true);
+eq('multi extra loses', E.grade({ t: 'multi', a: [0, 2] }, [0, 2, 1]).ok, false);
+eq('multi partial', E.grade({ t: 'multi', a: [0, 2] }, [0, 1]).score, 0);
+eq('multi half', E.grade({ t: 'multi', a: [0, 2] }, [0]).score, 0.5);
+eq('order exact', E.grade({ t: 'order', o: ['a', 'b', 'c'] }, [0, 1, 2]).ok, true);
+eq('order partial', E.grade({ t: 'order', o: ['a', 'b', 'c'] }, [0, 2, 1]).score, 1 / 3);
+eq('yesno', E.grade({ t: 'yesno', st: [{ a: true }, { a: false }] }, [true, false]).ok, true);
+eq('dropdown partial', E.grade({ t: 'dropdown', sl: [{ a: 0 }, { a: 1 }] }, [0, 0]).score, 0.5);
+eq('recall threshold', E.grade({ t: 'recall', pts: [1, 2, 3, 4] }, [true, true, true, false]).ok, true);
+eq('recall low', E.grade({ t: 'recall', pts: [1, 2, 3, 4] }, [true, false, false, false]).ok, false);
+
+// Answer completeness
+t('multi needs exact count', !E.answered({ t: 'multi', a: [0, 1] }, [0]));
+t('yesno needs all', !E.answered({ t: 'yesno', st: [{}, {}] }, [true, undefined]));
+t('dropdown needs all', !E.answered({ t: 'dropdown', sl: [{}, {}] }, [0, undefined]));
+t('single undefined', !E.answered({ t: 'single' }, undefined));
+t('single zero is answered', E.answered({ t: 'single' }, 0));
+
+// Shuffle
+const p = E.perm(10, 'x'); eq('perm is stable', p, E.perm(10, 'x')); eq('perm covers all', [...p].sort((a, b) => a - b), [...Array(10).keys()]);
+let moved = 0; D.q.filter(q => q.t === 'single').forEach(q => { if (E.perm(q.o.length, q.id + 's')[0] !== 0) moved++; });
+t('options are really shuffled', moved > D.q.filter(q => q.t === 'single').length * 0.5, String(moved));
+
+// Interleaving
+const il = E.interleave(['a1', 'a2', 'a3', 'b1', 'b2', 'c1'], x => x[0]);
+eq('interleave keeps all', [...il].sort(), ['a1', 'a2', 'a3', 'b1', 'b2', 'c1']);
+let adj = 0; il.forEach((x, i) => { if (i && x[0] === il[i - 1][0]) adj++; }); eq('no adjacent same skill when avoidable', adj, 0);
+
+// Session building
+const st = { settings: { minutes: 45, examDate: exam }, items: {}, skillBoost: {} };
+const s1 = E.buildSession(st, D.q, D.skills, '2026-11-02', 'seed');
+t('new-user session is non-empty', s1.length > 0); t('no duplicate ids', new Set(s1).size === s1.length);
+t('capped new items early on', s1.length <= Math.max(E.newItemTarget(D.q.length, 49), Math.floor(Math.round(45 / 1.3) * 0.6)));
+const priorityShare = s1.filter(id => { const q = D.q.find(x => x.id === id); return ['tx-spark', 'q-kql'].includes(q.s); }).length;
+t('PySpark and KQL lead for this learner', priorityShare >= 3, String(priorityShare));
+const allDue = { settings: { minutes: 45, examDate: exam }, skillBoost: {}, items: Object.fromEntries(D.q.map(q => [q.id, { S: 2, D: 5, reps: 1, lapses: 0, last: '2026-11-01', due: '2026-11-01' }])) };
+t('budget respected', E.buildSession(allDue, D.q, D.skills, '2026-11-02', 's').length <= Math.round(45 / 1.3));
+const lastDays = { settings: { minutes: 45, examDate: exam }, items: {}, skillBoost: {} };
+eq('no new items in final two days', E.buildSession(lastDays, D.q, D.skills, '2026-12-20', 's').length, 0);
+const fourWeek = E.newItemTarget(100, 28); eq('new target leaves a review window', fourWeek, Math.ceil(100 / 18));
+
+// Papers
+const paper = E.buildPaper(D.q, D.skills, D.domains, [], 50, 'mock1', 'cs1');
+t('paper near requested length', paper.length >= 45 && paper.length <= 55, String(paper.length));
+t('paper has no recall items', !paper.some(id => D.q.find(q => q.id === id).t === 'recall'));
+t('paper unique', new Set(paper).size === paper.length);
+t('paper includes the case', paper.filter(id => D.q.find(q => q.id === id).case === 'cs1').length === D.q.filter(q => q.case === 'cs1').length);
+const dm = Object.fromEntries(D.skills.map(s => [s.id, s.d]));
+const share = d => paper.filter(id => dm[D.q.find(q => q.id === id).s] === d).length / paper.length;
+t('paper mix follows domains', Math.abs(share('prepare') - 0.45) < 0.12 && Math.abs(share('model') - 0.27) < 0.12 && Math.abs(share('maintain') - 0.28) < 0.12, `${share('prepare')} ${share('model')} ${share('maintain')}`);
+
+// Content validation
+const ids = new Set(); const skillIds = new Set(D.skills.map(s => s.id)); const srcKeys = new Set(Object.keys(D.sources));
+D.q.forEach(q => {
+  const w = (m, c) => t(`${q.id}: ${m}`, c);
+  w('unique id', !ids.has(q.id)); ids.add(q.id);
+  w('known skill', skillIds.has(q.s)); w('has stem', q.q && q.q.length > 5); w('has source', (q.src || []).length > 0);
+  (q.src || []).forEach(k => w(`source ${k} exists`, srcKeys.has(k)));
+  if (q.case) w('case exists', D.cases.some(c => c.id === q.case));
+  if (q.t !== 'recall') w('has explanation', q.why && q.why.length > 10);
+  if (q.t === 'single') { w('answer in range', Number.isInteger(q.a) && q.a >= 0 && q.a < q.o.length); w('at least 2 options', q.o.length >= 2); w('options unique', new Set(q.o).size === q.o.length); }
+  else if (q.t === 'multi') { w('n matches', q.a.length === q.n); w('answers in range', q.a.every(i => i >= 0 && i < q.o.length)); w('more options than answers', q.o.length > q.n); }
+  else if (q.t === 'order') w('at least 3 steps', q.o.length >= 3);
+  else if (q.t === 'yesno') w('statements valid', q.st.length >= 2 && q.st.every(s => typeof s.a === 'boolean' && s.x));
+  else if (q.t === 'dropdown') {
+    const found = [...q.tpl.matchAll(/\{(\d+)\}/g)].map(m => +m[1]);
+    w('placeholders match slots', found.length === q.sl.length && new Set(found).size === q.sl.length);
+    w('slot answers in range', q.sl.every(s => Number.isInteger(s.a) && s.a >= 0 && s.a < s.o.length));
+  } else if (q.t === 'recall') w('has points', q.pts.length >= 2);
+  else w('known type', false);
+});
+D.skills.forEach(s => t(`skill ${s.id} has at least 3 questions`, D.q.filter(q => q.s === s.id).length >= 3, String(D.q.filter(q => q.s === s.id).length)));
+D.skills.forEach(s => t(`skill ${s.id} maps to domains`, D.domains[s.d] && D.oldDomains[s.old]));
+D.primers.forEach(n => n.s.forEach(x => t(`note ${n.id} skill ${x}`, skillIds.has(x))));
+D.labs.forEach(n => n.s.forEach(x => t(`lab ${n.id} skill ${x}`, skillIds.has(x))));
+D.review.forEach(r => { t(`review ${r[0]} status`, ['ok', 'reason', 'outdated', 'contested', 'exhibit'].includes(r[3])); t(`review ${r[0]} source`, !r[5] || srcKeys.has(r[5]), r[5]); t(`review ${r[0]} note when not ok`, r[3] === 'ok' || r[4].length > 5); });
+D.gaps.forEach(g => t(`gap skill ${g[2]}`, skillIds.has(g[2])));
+t('mix sums to 1', Math.abs(Object.values(D.domains).reduce((a, d) => a + d.mix, 0) - 1) < 1e-9);
+
+document.getElementById('sum').innerHTML = `<span class="${fail ? 'f' : 'p'}">${pass} passed, ${fail} failed</span> · ${D.q.length} questions`;
+document.getElementById('out').innerHTML = fails.map(f => `<li class="f">${f.replace(/</g, '&lt;')}</li>`).join('');
+window.TEST_RESULT = { pass, fail, fails, questions: D.q.length };
+</script></body></html>
