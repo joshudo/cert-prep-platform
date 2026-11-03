@@ -402,6 +402,7 @@
       if (q.t === 'order') a.answers[q.id] = orderCache[q.id + a.seed] || a.answers[q.id] || r;
       else if (q.t === 'single' ? r !== undefined : true) a.answers[q.id] = r;
     };
+    main.onchange = () => { capture(); save(); };
     main.onclick = e => {
       const t = e.target.closest('[data-p],[data-jump],[data-move]'); if (!t) return;
       if (t.dataset.move !== undefined) {
@@ -420,22 +421,22 @@
       }
       if (t.dataset.p === 'abandon' && confirm('Abandon this paper? Your answers will not be saved.')) { S.active = null; save(); location.hash = '#/today'; }
     };
-    tickTimer();
+    tickTimer(capture);
   }
-  function tickTimer() {
+  function tickTimer(capture) {
     clearInterval(timerHandle);
     const a = S.active; if (!a || !a.endsAt) return;
     const paint = () => {
       const el = document.getElementById('timer'); if (!el) { clearInterval(timerHandle); return; }
       const s = Math.max(0, Math.floor((a.endsAt - Date.now()) / 1000));
       el.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} left`;
-      if (s <= 0) { clearInterval(timerHandle); finishPaper(); }
+      if (s <= 0) { clearInterval(timerHandle); capture(); finishPaper(); }
     };
     paint(); timerHandle = setInterval(paint, 1000);
   }
   function finishPaper() {
     const a = S.active; if (!a) return;
-    const details = a.ids.map(id => { const q = byId[id], r = a.answers[id]; const g = E.answered(q, r) ? E.grade(q, r) : { ok: false, score: 0 }; return { id, r, ok: g.ok, score: g.score }; });
+    const details = a.ids.map(id => { const q = byId[id], r = a.answers[id]; const g = E.grade(q, r); return { id, r, ok: g.ok, score: g.score }; });
     const total = details.reduce((x, d) => x + d.score, 0) / details.length;
     details.forEach(d => {
       const q = byId[d.id];
@@ -555,6 +556,7 @@
   /* ---------- router ---------- */
   function render() {
     clearInterval(timerHandle);
+    main.onchange = null;
     const parts = (location.hash || '#/today').slice(2).split('/');
     const r = parts[0], arg = parts[1];
     const navKey = { session: 'today', paper: 'mock', result: 'mock', drillrun: 'drill' }[r] || r;

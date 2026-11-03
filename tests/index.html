@@ -55,6 +55,13 @@ eq('dropdown partial', E.grade({ t: 'dropdown', sl: [{ a: 0 }, { a: 1 }] }, [0, 
 eq('recall threshold', E.grade({ t: 'recall', pts: [1, 2, 3, 4] }, [true, true, true, false]).ok, true);
 eq('recall low', E.grade({ t: 'recall', pts: [1, 2, 3, 4] }, [true, false, false, false]).ok, false);
 
+// Incomplete answers, as a submitted or timed-out paper stores them
+eq('dropdown with a blank slot earns partial marks', E.grade({ t: 'dropdown', sl: [{ a: 0 }, { a: 1 }] }, [0, null]), { ok: false, score: 0.5 });
+eq('yesno with a blank statement earns partial marks', E.grade({ t: 'yesno', st: [{ a: true }, { a: false }] }, [true, null]), { ok: false, score: 0.5 });
+eq('multi with too few picks earns partial marks', E.grade({ t: 'multi', a: [0, 2] }, [2]), { ok: false, score: 0.5 });
+const blanks = [{ t: 'single', a: 1 }, { t: 'multi', a: [0, 2] }, { t: 'order', o: ['a', 'b'] }, { t: 'yesno', st: [{ a: true }] }, { t: 'dropdown', sl: [{ a: 0 }] }];
+blanks.forEach(q => eq(`unanswered ${q.t} scores 0`, E.grade(q, undefined), { ok: false, score: 0 }));
+
 // Answer completeness
 t('multi needs exact count', !E.answered({ t: 'multi', a: [0, 1] }, [0]));
 t('yesno needs all', !E.answered({ t: 'yesno', st: [{}, {}] }, [true, undefined]));
